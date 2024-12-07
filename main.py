@@ -4,7 +4,7 @@ from flask_jwt_extended import JWTManager, create_access_token, jwt_required, ge
 import datetime
 import csv
 from io import StringIO
-from flask_restx import Api, Resource, fields
+from flask_restx import Api, Resource, fields, reqparse
 
 # Initialize the Flask application
 app = Flask(__name__)
@@ -66,6 +66,12 @@ login_model = api.model('Login', {
     'password': fields.String(required=True, description='User password'),
 })
 
+book_model = api.model('Book', {
+    'title': fields.String(required=True, description='The title of the book'),
+    'author': fields.String(required=True, description='The author of the book'),
+    'available_copies': fields.Integer(required=True, description='Number of available copies')
+})
+
 # API to login and get JWT token
 @api.route('/api/login')
 class Login(Resource):
@@ -73,19 +79,82 @@ class Login(Resource):
     def post(self):
         """Authenticate user and return JWT token"""
         data = request.get_json()
+        #print("data is",data)
         email = data.get('email')
+        #print("email is",email)
         password = data.get('password')
+        #print("password is",password)
         
         if not email or not password:
             return {'message': 'Missing email or password'}, 400
         
         user = User.query.filter_by(email=email).first()
+        print("user is",user)
         if not user or user.password != password:
             return {'message': 'Invalid credentials'}, 401
         
         # Create JWT token
         access_token = create_access_token(identity=email)
         return {'access_token': access_token}, 200
+    
+@api.route('/api/users')
+class Users(Resource):
+    def post(self):
+        """Create a new user"""
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        role = data.get('role')  # 'librarian' or 'user'
+
+        if not email or not password or not role:
+            return {'message': 'Missing required fields'}, 400
+        
+        if role not in ['librarian', 'user']:
+            return {'message': 'Invalid role, must be "librarian" or "user"'}, 400
+
+        # Check if the email already exists
+        if User.query.filter_by(email=email).first():
+            return {'message': 'User with this email already exists'}, 409
+        
+        # Create and add the user
+        new_user = User(email=email, password=password, role=role)
+        db.session.add(new_user)
+        db.session.commit()
+
+        return {'message': 'User created successfully'}, 201
+    
+@api.route('/api/book')
+class AddBook(Resource):
+    @api.expect(book_model)
+    @jwt_required()  # Ensure the user is authenticated
+    def post(self):
+        """
+        Add a new book to the library
+        """
+        current_user_email = get_jwt_identity()
+        user = User.query.filter_by(email=current_user_email).first()
+
+        # Check if the user has librarian privileges
+        if user.role != 'librarian':
+            return {'message': 'Only librarians can add books'}, 403
+
+        # Parse the input data
+        data = request.get_json()
+        title = data.get('title')
+        author = data.get('author')
+        available_copies = data.get('available_copies')
+
+        # Validate the input data
+        if not title or not author or available_copies is None or available_copies < 0:
+            return {'message': 'Invalid input data'}, 400
+
+        # Add the book to the database
+        new_book = Book(title=title, author=author, available_copies=available_copies)
+        db.session.add(new_book)
+        db.session.commit()
+
+        return {'message': 'Book added successfully', 'book_id': new_book.id}, 201
+
 
 # API to export borrow history to CSV
 @api.route('/api/export/history')
