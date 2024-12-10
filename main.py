@@ -3,7 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 import datetime
 import csv
-from io import StringIO
+from io import StringIO, BytesIO
 from flask_restx import Api, Resource, fields, reqparse
 from datetime import datetime, timedelta
 #from flask_restplus import Resource, reqparse
@@ -420,6 +420,54 @@ class AddBook(Resource):
 #         return {'message': 'Borrow request submitted successfully'}, 201
 
 @api.route('/api/borrow')
+# class BorrowBook(Resource):
+#     @jwt_required()  # Ensure the user is authenticated
+#     @api.expect(borrow_request_model)
+#     def post(self):
+#         """Submit a request to borrow a book"""
+#         current_user_email = get_jwt_identity()
+#         user = User.query.filter_by(email=current_user_email).first()
+
+#         # Get data from the request
+#         data = request.get_json()
+#         book_id = data.get('book_id')
+#         start_date = data.get('start_date')
+#         end_date = data.get('end_date')
+
+#         # Validate the input data
+#         if not book_id or not start_date or not end_date:
+#             return {'message': 'Missing required fields'}, 400
+
+#         # Validate the date format
+#         try:
+#             start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+#             end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+#         except ValueError:
+#             return {'message': 'Invalid date format. Please use YYYY-MM-DD'}, 400
+
+#         # Check if the book exists
+#         book = Book.query.get(book_id)
+#         if not book:
+#             return {'message': 'Book not found'}, 404
+
+#         # Check for overlapping borrow dates for the same book
+#         overlapping_borrows = BorrowRequest.query.filter(
+#             BorrowRequest.book_id == book_id,
+#             BorrowRequest.status == 'approved',
+#             (BorrowRequest.start_date <= end_date) & (BorrowRequest.end_date >= start_date)
+#         ).all()
+#         print("overlapping_borrows is",overlapping_borrows)
+
+#         # If there are overlapping borrow requests, return an error
+#         if overlapping_borrows:
+#             return {'message': 'The book is already borrowed during the requested period'}, 400
+
+#         # If no overlap, create the borrow request
+#         borrow_request = BorrowRequest(book_id=book_id, user_id=user.id, start_date=start_date, end_date=end_date, status='pending')
+#         db.session.add(borrow_request)
+#         db.session.commit()
+
+#         return {'message': 'Borrow request submitted successfully'}, 201
 class BorrowBook(Resource):
     @jwt_required()  # Ensure the user is authenticated
     @api.expect(borrow_request_model)
@@ -453,13 +501,15 @@ class BorrowBook(Resource):
         # Check for overlapping borrow dates for the same book
         overlapping_borrows = BorrowRequest.query.filter(
             BorrowRequest.book_id == book_id,
-            BorrowRequest.status == 'approved',
+            BorrowRequest.user_id == user.id,  # Make sure it’s the same user
+            BorrowRequest.status == 'pending',  # Only check pending requests
             (BorrowRequest.start_date <= end_date) & (BorrowRequest.end_date >= start_date)
         ).all()
+        print("overlapping_borrows is", overlapping_borrows)
 
         # If there are overlapping borrow requests, return an error
         if overlapping_borrows:
-            return {'message': 'The book is already borrowed during the requested period'}, 400
+            return {'message': 'You have already submitted a borrow request for this book during the same period.'}, 400
 
         # If no overlap, create the borrow request
         borrow_request = BorrowRequest(book_id=book_id, user_id=user.id, start_date=start_date, end_date=end_date, status='pending')
@@ -469,8 +519,34 @@ class BorrowBook(Resource):
         return {'message': 'Borrow request submitted successfully'}, 201
 
 
+
 # API to view all book borrow requests (only for librarians)
 @api.route('/api/borrow-requests')
+# class BorrowRequests(Resource):
+#     @jwt_required()
+#     def get(self):
+#         """View all book borrow requests (librarians only)"""
+#         current_user_email = get_jwt_identity()
+#         user = User.query.filter_by(email=current_user_email).first()
+
+#         # Check if the user has librarian privileges
+#         if user.role != 'librarian':
+#             return {'message': 'Only librarians can view borrow requests'}, 403
+        
+#         # Get all borrow requests
+#         borrow_requests = BorrowRequest.query.all()
+#         requests_data = [
+#             {
+#                 'id': req.id,
+#                 'book_id': req.book_id,
+#                 'user_id': req.user_id,
+#                 'start_date': req.start_date,
+#                 'end_date': req.end_date,
+#                 'status': req.status
+#             }
+#             for req in borrow_requests
+#         ]
+#         return requests_data
 class BorrowRequests(Resource):
     @jwt_required()
     def get(self):
@@ -489,12 +565,13 @@ class BorrowRequests(Resource):
                 'id': req.id,
                 'book_id': req.book_id,
                 'user_id': req.user_id,
-                'start_date': req.start_date,
-                'end_date': req.end_date,
+                'start_date': req.start_date.strftime('%Y-%m-%d') if req.start_date else None,
+                'end_date': req.end_date.strftime('%Y-%m-%d') if req.end_date else None,
                 'status': req.status
             }
             for req in borrow_requests
         ]
+        
         return requests_data
 
 
@@ -540,33 +617,33 @@ class ApproveBorrowRequest(Resource):
 
 
 # API to view a user's book borrow history (only for librarians)
-@api.route('/api/user-history/<int:user_id>')
-class UserBorrowHistory(Resource):
-    @jwt_required()
-    def get(self, user_id):
-        """View a user's book borrow history (librarians only)"""
-        current_user_email = get_jwt_identity()
-        user = User.query.filter_by(email=current_user_email).first()
+# @api.route('/api/user-history/<int:user_id>')
+# class UserBorrowHistory(Resource):
+#     @jwt_required()
+#     def get(self, user_id):
+#         """View a user's book borrow history (librarians only)"""
+#         current_user_email = get_jwt_identity()
+#         user = User.query.filter_by(email=current_user_email).first()
 
-        # Check if the user has librarian privileges
-        if user.role != 'librarian':
-            return {'message': 'Only librarians can view user borrow history'}, 403
+#         # Check if the user has librarian privileges
+#         if user.role != 'librarian':
+#             return {'message': 'Only librarians can view user borrow history'}, 403
         
-        # Get borrow history for the specified user
-        borrow_history = BorrowHistory.query.filter_by(user_id=user_id).all()
-        if not borrow_history:
-            return {'message': 'No borrow history found for this user'}, 404
+#         # Get borrow history for the specified user
+#         borrow_history = BorrowHistory.query.filter_by(user_id=user_id).all()
+#         if not borrow_history:
+#             return {'message': 'No borrow history found for this user'}, 404
         
-        history_data = [
-            {
-                'book_id': history.book_id,
-                'start_date': history.start_date,
-                'end_date': history.end_date,
-                'return_date': history.return_date
-            }
-            for history in borrow_history
-        ]
-        return history_data
+#         history_data = [
+#             {
+#                 'book_id': history.book_id,
+#                 'start_date': history.start_date,
+#                 'end_date': history.end_date,
+#                 'return_date': history.return_date
+#             }
+#             for history in borrow_history
+#         ]
+#         return history_data
 
 
 # Library User APIs:
@@ -581,12 +658,44 @@ class Books(Resource):
         return books_data
 
 # API to submit a request to borrow a book
-@api.route('/api/borrow')
-class BorrowBook(Resource):
-    @jwt_required()
-    @api.expect(borrow_request_model)
+# @api.route('/api/borrow')
+# class BorrowBook(Resource):
+#     @jwt_required()
+#     @api.expect(borrow_request_model)
+#     def post(self):
+#         """Submit a request to borrow a book"""
+#         current_user_email = get_jwt_identity()
+#         user = User.query.filter_by(email=current_user_email).first()
+
+#         # Parse input data
+#         data = request.get_json()
+#         book_id = data.get('book_id')
+#         start_date = data.get('start_date')
+#         end_date = data.get('end_date')
+
+#         # Validate the input
+#         if not book_id or not start_date or not end_date:
+#             return {'message': 'Missing required fields'}, 400
+        
+#         # Check if the book exists
+#         book = Book.query.get(book_id)
+#         if not book:
+#             return {'message': 'Book not found'}, 404
+        
+#         # Create borrow request
+#         borrow_request = BorrowRequest(book_id=book_id, user_id=user.id, start_date=start_date, end_date=end_date)
+#         db.session.add(borrow_request)
+#         db.session.commit()
+
+#         return {'message': 'Borrow request submitted successfully'}, 201
+
+#Insert a new borrow history record
+@api.route('/api/borrow-history')
+class InsertBorrowHistory(Resource):
+    @jwt_required()  # Ensure the user is authenticated
+    @api.expect(borrow_history_model)  # Validate the input data structure
     def post(self):
-        """Submit a request to borrow a book"""
+        """Insert a new borrow history record"""
         current_user_email = get_jwt_identity()
         user = User.query.filter_by(email=current_user_email).first()
 
@@ -595,25 +704,70 @@ class BorrowBook(Resource):
         book_id = data.get('book_id')
         start_date = data.get('start_date')
         end_date = data.get('end_date')
+        return_date = data.get('return_date', None)  # Return date is optional
 
-        # Validate the input
+        # Validate the input data
         if not book_id or not start_date or not end_date:
             return {'message': 'Missing required fields'}, 400
-        
+
+        # Validate the date format
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+            if return_date:
+                return_date = datetime.strptime(return_date, '%Y-%m-%d').date()  # If return_date is provided, validate it as well
+        except ValueError:
+            return {'message': 'Invalid date format. Please use YYYY-MM-DD'}, 400
+
         # Check if the book exists
         book = Book.query.get(book_id)
         if not book:
             return {'message': 'Book not found'}, 404
-        
-        # Create borrow request
-        borrow_request = BorrowRequest(book_id=book_id, user_id=user.id, start_date=start_date, end_date=end_date)
-        db.session.add(borrow_request)
+
+        # Check if the user exists
+        if not user:
+            return {'message': 'User not found'}, 404
+
+        # Create the borrow history record
+        borrow_history = BorrowHistory(
+            book_id=book_id,
+            user_id=user.id,
+            start_date=start_date,
+            end_date=end_date,
+            return_date=return_date
+        )
+
+        # Add the new borrow history to the database
+        db.session.add(borrow_history)
         db.session.commit()
 
-        return {'message': 'Borrow request submitted successfully'}, 201
+        return {'message': 'Borrow history added successfully', 'borrow_history_id': borrow_history.id}, 201
+
 
 # API to view personal book borrow history
 @api.route('/api/my-history')
+# class MyBorrowHistory(Resource):
+#     @jwt_required()
+#     def get(self):
+#         """View personal book borrow history"""
+#         current_user_email = get_jwt_identity()
+#         user = User.query.filter_by(email=current_user_email).first()
+
+#         # Get borrow history for the authenticated user
+#         borrow_history = BorrowHistory.query.filter_by(user_id=user.id).all()
+#         if not borrow_history:
+#             return {'message': 'No borrow history found'}, 404
+        
+#         history_data = [
+#             {
+#                 'book_id': history.book_id,
+#                 'start_date': history.start_date,
+#                 'end_date': history.end_date,
+#                 'return_date': history.return_date
+#             }
+#             for history in borrow_history
+#         ]
+#         return history_data
 class MyBorrowHistory(Resource):
     @jwt_required()
     def get(self):
@@ -626,18 +780,56 @@ class MyBorrowHistory(Resource):
         if not borrow_history:
             return {'message': 'No borrow history found'}, 404
         
+        # Convert date objects to string in 'YYYY-MM-DD' format
         history_data = [
             {
+                'borrow_history_id': history.id,
                 'book_id': history.book_id,
-                'start_date': history.start_date,
-                'end_date': history.end_date,
-                'return_date': history.return_date
+                'start_date': history.start_date.strftime('%Y-%m-%d') if history.start_date else None,
+                'end_date': history.end_date.strftime('%Y-%m-%d') if history.end_date else None,
+                'return_date': history.return_date.strftime('%Y-%m-%d') if history.return_date else None
             }
             for history in borrow_history
         ]
+        
         return history_data
 
+
 @api.route('/api/export/history')
+# class ExportHistory(Resource):
+#     @jwt_required()
+#     def get(self):
+#         """Export borrow history of the logged-in user as CSV"""
+#         # Get the current logged-in user's email from JWT token
+#         current_user_email = get_jwt_identity()
+        
+#         # Fetch the user from the database
+#         user = User.query.filter_by(email=current_user_email).first()
+        
+#         # Query borrow history for the authenticated user
+#         history = BorrowHistory.query.filter_by(user_id=user.id).all()
+        
+#         # Check if history exists
+#         if not history:
+#             return {'message': 'No borrow history found'}, 404
+        
+#         # Prepare a CSV file in memory
+#         output = StringIO()
+#         writer = csv.writer(output)
+        
+#         # Write header row to the CSV
+#         writer.writerow(["Book ID", "Book Title", "Start Date", "End Date", "Return Date"])
+        
+#         # Write data rows
+#         for borrow in history:
+#             book = Book.query.get(borrow.book_id)
+#             writer.writerow([book.id, book.title, borrow.start_date, borrow.end_date, borrow.return_date])
+        
+#         # Move the cursor to the beginning of the StringIO buffer
+#         output.seek(0)
+        
+#         # Send the CSV as a downloadable file
+#         return send_file(output, mimetype='text/csv', as_attachment=True, download_name='borrow_history.csv')
 class ExportHistory(Resource):
     @jwt_required()
     def get(self):
@@ -655,8 +847,8 @@ class ExportHistory(Resource):
         if not history:
             return {'message': 'No borrow history found'}, 404
         
-        # Prepare a CSV file in memory
-        output = StringIO()
+        # Prepare a CSV file in memory using BytesIO (binary mode)
+        output = BytesIO()
         writer = csv.writer(output)
         
         # Write header row to the CSV
@@ -667,11 +859,13 @@ class ExportHistory(Resource):
             book = Book.query.get(borrow.book_id)
             writer.writerow([book.id, book.title, borrow.start_date, borrow.end_date, borrow.return_date])
         
-        # Move the cursor to the beginning of the StringIO buffer
+        # Move the cursor to the beginning of the BytesIO buffer
         output.seek(0)
         
         # Send the CSV as a downloadable file
         return send_file(output, mimetype='text/csv', as_attachment=True, download_name='borrow_history.csv')
+
+
 
 # Start the Flask app
 if __name__ == '__main__':
